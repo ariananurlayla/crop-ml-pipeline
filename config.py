@@ -75,6 +75,14 @@ CROPHARVEST_REFERENCE: str = ("G. Tseng, I. Zvonkov, C. L. Nakalembe, H. Kerner,
                               "NeurIPS Datasets and Benchmarks, 2021.")
 CROPHARVEST_LICENSE: str = "CC-BY-SA-4.0"
 
+# --- regional subsets (bbox filtering via --region) ---
+CROPHARVEST_REGIONS: Dict[str, Dict[str, float]] = {
+    # Southeast Asia / ASEAN: mainland SEA (Myanmar..Vietnam) plus maritime
+    # SEA down to Java. Captures every CropHarvest training point in the
+    # region (Thailand, Vietnam, Indonesia - see the SEA distribution map).
+    "sea": {"lat_min": -11.0, "lat_max": 28.5, "lon_min": 92.0, "lon_max": 141.5},
+}
+
 # Expected 181-column layout (used only for sanity warnings):
 #   96 S2 spectral (8 bands x 12) + 12 NDVI + 12 NDWI + 12 VV + 12 VH + 12 Rain = 156 temporal
 #   3 terrain + 22 annual radar statistics/entropy = 25 static

@@ -13,18 +13,20 @@ from __future__ import annotations
 import argparse
 import os
 import pickle
+import shutil
 import sys
 import time
 
 import numpy as np
 import pandas as pd
+from sklearn.metrics import classification_report
 
 import dataset as ds
 import synthetic
 from baselines import run_tabular_baseline
 from config import (CLASS_NAMES, CROPHARVEST_CHANNELS, CROPHARVEST_LICENSE,
-                    CROPHARVEST_ZENODO_ID, IFRI_BASELINES, TARGET_REGRESSION,
-                    TrainingConfig)
+                    CROPHARVEST_REGIONS, CROPHARVEST_ZENODO_ID,
+                    IFRI_BASELINES, TARGET_REGRESSION, TrainingConfig)
 from models import CropClassifier, CropRegressor
 from training import (build_loss_fn, evaluate_final, predict, resolve_device,
                       set_seed, train_model)
@@ -40,6 +42,9 @@ def parse_args():
     p.add_argument("--cropharvest", action="store_true",
                    help="use the NASA CropHarvest dataset (Zenodo record 10251170, "
                         "CC-BY-SA-4.0) as the data source; downloads ~168 MB on first use")
+    p.add_argument("--region", choices=["global", "sea"], default="global",
+                   help="CropHarvest: restrict to a regional bbox from "
+                        "config.CROPHARVEST_REGIONS ('sea' = Southeast Asia/ASEAN)")
     p.add_argument("--cropharvest-root", default="data/cropharvest",
                    help="directory for CropHarvest files (default: data/cropharvest)")
     p.add_argument("--other-samples", type=int, default=4000, metavar="N",
@@ -50,8 +55,9 @@ def parse_args():
                    default="both")
     p.add_argument("--loss", choices=["ce", "ce_balanced", "focal"], default="focal",
                    help="classification loss")
-    p.add_argument("--baseline", choices=["lightgbm", "xgboost", "rf"],
-                   default="lightgbm", help="shallow tabular baseline model")
+    p.add_argument("--baseline", choices=["lightgbm", "xgboost", "rf", "extratrees", "all"],
+                   default="lightgbm", help="shallow tabular baseline model "
+                   "('all' fits LightGBM + XGBoost + RandomForest + ExtraTrees)")
     p.add_argument("--epochs", type=int, default=150)
     p.add_argument("--batch-size", type=int, default=64)
     p.add_argument("--lr", type=float, default=1e-3)
@@ -111,6 +117,14 @@ def main():
         import cropharvest_data as ch
         root = ch.ensure_cropharvest(args.cropharvest_root, download=not args.no_download)
         df = ch.build_dataframe(root, other_samples=args.other_samples, seed=config.seed)
+        region_info = {"region": args.region}
+        if args.region == "sea":
+            bbox = CROPHARVEST_REGIONS["sea"]
+            df = ch.filter_region(df, bbox)
+            if len(df) == 0:
+                sys.exit("[main] --region sea matched 0 CropHarvest rows - "
+                         "check CROPHARVEST_REGIONS in config.py")
+            region_info["bbox"] = bbox
         config.data_path = os.path.join(root, "cropharvest_features.csv")
         split_groups = ch.spatial_grid_groups(df)
         cropharvest_kwargs = dict(
@@ -124,6 +138,7 @@ def main():
             "other_samples": args.other_samples,
             "n_source_datasets": int(df["source_dataset"].nunique()),
             "n_spatial_cells": int(split_groups.nunique()),
+            **region_info,
         }
     else:
         df = pd.read_csv(args.data)
@@ -139,6 +154,7 @@ def main():
         "classification": {}, "regression": {},
         "figures": [], "reports": [],
     }
+    extra_reports = []
 
     temporal_cols, static_cols, channels = ds.discover_feature_columns(
         df, include_rain=(config.rain_mode == "temporal_channel"),
@@ -156,7 +172,10 @@ def main():
               + (" | temporal self-attention ON" if args.attention else ""))
         if args.cropharvest:
             train_df, val_df, test_df, split_info = ds.train_val_test_split_grouped(
-                df, groups=split_groups, config=config)
+                df, groups=split_groups, config=config,
+                min_per_class=(1 if args.region == "sea" else None),
+                singletons_to_train=(args.region == "sea"),
+                row_tolerance=(0.15 if args.region == "sea" else None))
             summary["data"].update({"split": split_info["split_type"],
                                     "split_info": split_info})
         else:
@@ -164,14 +183,40 @@ def main():
             summary["data"]["split"] = "stratified"
 
         baseline_res = None
+        baseline_res_list = []
         if not args.skip_baseline:
-            baseline_res, baseline_model = run_tabular_baseline(
-                train_df, test_df, config, feature_cols,
-                model_name=config.baseline, binary=args.binary)
-            pkl_name = ("baseline_gbdt.pkl" if config.baseline == "lightgbm"
-                        else f"baseline_{config.baseline}.pkl")
-            with open(os.path.join(run_dir, "weights", pkl_name), "wb") as f:
-                pickle.dump(baseline_model, f)
+            model_names = (["lightgbm", "xgboost", "rf", "extratrees"]
+                           if config.baseline == "all" else [config.baseline])
+            for mi, mname in enumerate(model_names):
+                res, fitted = run_tabular_baseline(
+                    train_df, test_df, config, feature_cols,
+                    model_name=mname, binary=args.binary)
+                res["model_key"] = mname
+                baseline_res_list.append(res)
+                if mi == 0:
+                    baseline_res, baseline_model = res, fitted
+                pkl_name = ("baseline_gbdt.pkl" if mname == "lightgbm"
+                            else f"baseline_{mname}.pkl")
+                with open(os.path.join(run_dir, "weights", pkl_name), "wb") as f:
+                    pickle.dump(fitted, f)
+                if len(model_names) > 1 and not args.binary:
+                    fig_cm_m = os.path.join(run_dir, "figures",
+                                            f"confusion_matrix_{mname}.png")
+                    reporting.plot_confusion_matrix(
+                        np.array(res["confusion_matrix"]), fig_cm_m, class_names)
+                    summary["figures"].append(fig_cm_m)
+                    cr_path = os.path.join(run_dir, "reports",
+                                           f"classification_report_{mname}.json")
+                    reporting.save_json(classification_report(
+                        res["y_true"], res["y_pred"],
+                        labels=range(len(class_names)), target_names=class_names,
+                        output_dict=True, zero_division=0), cr_path)
+                    extra_reports.append(cr_path)
+            if len(model_names) > 1:
+                comp_path = os.path.join(run_dir, "reports", "baseline_comparison.csv")
+                pd.DataFrame(baseline_res_list).drop(
+                    columns=["y_true", "y_pred"]).to_csv(comp_path, index=False)
+                extra_reports.append(comp_path)
 
         train_dl, val_dl, test_dl, train_ds = ds.build_dataloaders(
             train_df, val_df, test_df, config, "classification",
@@ -225,11 +270,20 @@ def main():
             fig_split = os.path.join(run_dir, "figures", "split_map.png")
             reporting.plot_split_map(train_df, val_df, test_df, fig_split)
             summary["figures"] += [fig_split]
+            if args.region == "sea":
+                fig_sea = os.path.join(run_dir, "figures",
+                                       "sea_sample_distribution.png")
+                reporting.plot_sea_distribution(df, fig_sea)
+                sea_copy = os.path.join(args.outputs, "sea_sample_distribution.png")
+                shutil.copyfile(fig_sea, sea_copy)
+                summary["figures"].append(fig_sea)
+                summary["sea_map_copy"] = sea_copy
 
         summary["classification"] = {
             "loss": loss_name, "metric": "accuracy",
             "class_names": class_names, "binary": args.binary,
             "cnn1d": metrics, "baseline": baseline_res,
+            "baselines": baseline_res_list,
             "history": _history_json(history),
             "tensor": {"channels": train_ds.channels,
                        "n_channels": train_ds.n_channels,
@@ -310,7 +364,7 @@ def main():
     # ------------------------------------------------------------------
     print("\n=== [3/3] REPORTS ===")
     md_path, tex_path = reporting.generate_thesis_report(summary, run_dir)
-    summary["reports"] = [md_path, tex_path]
+    summary["reports"] = [md_path, tex_path] + extra_reports
     reporting.save_json(summary, os.path.join(run_dir, "metrics_summary.json"))
 
     print(f"\nDone. Everything is under: {run_dir}")

@@ -192,6 +192,87 @@ def plot_split_map(train_df, val_df, test_df, path, dpi: int = 300):
 
 
 # ---------------------------------------------------------------------------
+# regional subset distribution map (--region sea)
+# ---------------------------------------------------------------------------
+
+SEA_COAST = "#9aa5ad"
+SEA_LABEL_INK = "#5f6b76"
+SEA_COUNTRY_LABELS = [
+    (96.6, 16.0, "MYANMAR"), (99.2, 14.6, "THAILAND"), (102.5, 18.9, "LAOS"),
+    (106.9, 15.3, "VIETNAM"), (104.6, 12.1, "CAMBODIA"), (102.7, 3.4, "MALAYSIA"),
+    (109.4, -7.4, "INDONESIA\n(West Java)")]
+
+
+def _coastline_segments():
+    """Natural Earth 1:110m coastline segments from assets/; [] when absent.
+
+    Committed alongside the repo (public-domain Natural Earth data), so the
+    map renders identically offline instead of fetching at run time.
+    """
+    path = os.path.join(os.path.dirname(os.path.abspath(__file__)),
+                        "assets", "ne_110m_coastline.geojson")
+    try:
+        with open(path, encoding="utf-8") as f:
+            gj = json.load(f)
+    except (OSError, ValueError):
+        print("[report] warning: coastline file not found - drawing without basemap")
+        return []
+    segs = []
+    for feat in gj.get("features", []):
+        geom = feat.get("geometry") or {}
+        t = geom.get("type")
+        if t == "LineString":
+            segs.append(np.asarray(geom["coordinates"], dtype=float))
+        elif t == "MultiLineString":
+            segs.extend(np.asarray(p, dtype=float) for p in geom["coordinates"])
+    return segs
+
+
+def plot_sea_distribution(df, path, dpi: int = 300):
+    """Spatial sample-distribution map of the SEA subset as small multiples.
+
+    One panel per crop class: a 4-hue categorical palette cannot separate
+    Rice/Corn/Sugarcane/Other for color-deficient readers on this surface
+    (validated), so the facets carry identity instead - each panel is a
+    single series named by its title, and the sparse Corn/Other panels make
+    the regional class imbalance visible at a glance.
+    """
+    if not all(c in df.columns for c in ("longitude", "latitude", "crop_class")):
+        print("[report] warning: skipping SEA map (missing lat/lon/class columns)")
+        return
+    counts = df["crop_class"].value_counts().sort_index().to_dict()
+    coasts = _coastline_segments()
+    fig, axes = plt.subplots(2, 2, figsize=(11.5, 8.6))
+    for c, ax in enumerate(axes.ravel()):
+        ax.set_facecolor("#fbfcfd")
+        for xy in coasts:
+            ax.plot(xy[:, 0], xy[:, 1], color=SEA_COAST, lw=0.5,
+                    solid_capstyle="round", zorder=1)
+        sub = df[df["crop_class"] == c]
+        ax.scatter(sub["longitude"], sub["latitude"], s=36, color=SERIES_BLUE,
+                   edgecolors="white", linewidths=0.6, zorder=4)
+        for x, y, txt in SEA_COUNTRY_LABELS:
+            ax.text(x, y, txt, color=SEA_LABEL_INK, fontsize=7, style="italic",
+                    ha="center", va="center", zorder=3)
+        ax.set_xlim(95.5, 110.5)
+        ax.set_ylim(-8.2, 19.2)
+        ax.set_xticks([98, 104, 110])
+        ax.set_yticks([-8, 0, 8, 16])
+        ax.set_title(f"{CLASS_NAMES[c]} (n={counts.get(c, 0)})",
+                     color=INK_PRIMARY, fontsize=11)
+        if ax in axes[:, 0]:           # left column only
+            ax.set_ylabel("Latitude", color=INK_MUTED, fontsize=8)
+        if ax in axes[-1, :]:          # bottom row only
+            ax.set_xlabel("Longitude", color=INK_MUTED, fontsize=8)
+    fig.suptitle("CropHarvest Southeast Asia subset - sample distribution by crop class",
+                 color=INK_PRIMARY, y=1.0)
+    fig.tight_layout()
+    fig.savefig(path, dpi=dpi, bbox_inches="tight")
+    plt.close(fig)
+    print(f"[report] figure -> {path}")
+
+
+# ---------------------------------------------------------------------------
 # thesis-draft generator (Markdown + LaTeX)
 # ---------------------------------------------------------------------------
 
@@ -368,6 +449,14 @@ def _methodology_outline(summary: dict) -> str:
                 f"* Split: {pct('train_size')}/{pct('val_size')}/{pct('test_size')} "
                 f"stratified fallback (seed {cfg['seed']}) - the spatial-group split "
                 f"failed its class-coverage check (see the run log).")
+        if data.get("region") == "sea":
+            bbox = data.get("bbox") or {}
+            lines.append(
+                f"* Region: filtered to the Southeast Asia bounding box "
+                f"(lat {bbox.get('lat_min')}..{bbox.get('lat_max')}, "
+                f"lon {bbox.get('lon_min')}..{bbox.get('lon_max')}), leaving "
+                f"{data['rows']} samples; single-sample classes are pinned to "
+                f"train because they cannot populate all three splits.")
     else:
         lines = [
             f"* Data: {data['rows']} rows from {data['source']} "
@@ -414,6 +503,7 @@ def _methodology_outline(summary: dict) -> str:
 def _markdown_table(summary: dict) -> str:
     cls = (summary.get("classification") or {}).get("cnn1d")
     base = (summary.get("classification") or {}).get("baseline")
+    bases = (summary.get("classification") or {}).get("baselines") or ([base] if base else [])
     if _is_cropharvest(summary):
         rows = ["| Metric | This run |",
                 "|--------|----------|"]
@@ -422,13 +512,13 @@ def _markdown_table(summary: dict) -> str:
                 f"| Classification test accuracy (CNN 1D) | {cls['test_accuracy_pct']}% |")
             rows.append(
                 f"| Classification macro-F1 (CNN 1D) | {cls['macro_f1_pct']}% |")
-        if base:
+        for b in bases:
             rows.append(
-                f"| Classification test accuracy (shallow {base['model']}) | "
-                f"{base['test_accuracy_pct']}% |")
+                f"| Classification test accuracy (shallow {b['model']}) | "
+                f"{b['test_accuracy_pct']}% |")
             rows.append(
-                f"| Classification macro-F1 (shallow {base['model']}) | "
-                f"{base['macro_f1_pct']}% |")
+                f"| Classification macro-F1 (shallow {b['model']}) | "
+                f"{b['macro_f1_pct']}% |")
         rows.append(f"| Held-out split | {summary['data'].get('split', 'stratified')} |")
         return "\n".join(rows)
 
@@ -509,14 +599,15 @@ def _build_markdown(summary: dict) -> str:
 def _latex_table(summary: dict) -> str:
     cls = (summary.get("classification") or {}).get("cnn1d")
     base = (summary.get("classification") or {}).get("baseline")
+    bases = (summary.get("classification") or {}).get("baselines") or ([base] if base else [])
     if _is_cropharvest(summary):
         rows = []
         if cls:
             rows.append(rf"Classification test accuracy (CNN 1D) & {cls['test_accuracy_pct']}\% \\")
             rows.append(rf"Classification macro-F1 (CNN 1D) & {cls['macro_f1_pct']}\% \\")
-        if base:
-            rows.append(rf"Classification test accuracy (shallow {_tex_escape(base['model'])}) & {base['test_accuracy_pct']}\% \\")
-            rows.append(rf"Classification macro-F1 (shallow {_tex_escape(base['model'])}) & {base['macro_f1_pct']}\% \\")
+        for b in bases:
+            rows.append(rf"Classification test accuracy (shallow {_tex_escape(b['model'])}) & {b['test_accuracy_pct']}\% \\")
+            rows.append(rf"Classification macro-F1 (shallow {_tex_escape(b['model'])}) & {b['macro_f1_pct']}\% \\")
         rows.append(rf"Held-out split & {_tex_escape(summary['data'].get('split', 'stratified'))} \\")
         return "\n".join(rows)
 
@@ -547,6 +638,8 @@ def _latex_figures(summary: dict) -> str:
             "confusion_matrix.png": "Confusion matrix on the held-out test set.",
             "split_map.png": "Geographic scatter of the spatially-grouped split "
                              "(train / validation / test).",
+            "sea_sample_distribution.png": "Spatial distribution of the Southeast Asia "
+                                           "subset (one panel per crop class).",
             "learning_curves_regression.png": "Training and validation loss / MAE (days) over epochs.",
             "regression_analysis.png": "Actual vs. predicted days after planting (HST).",
         }.get(base, base.replace("_", " "))

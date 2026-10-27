@@ -31,8 +31,11 @@ NeurIPS Datasets & Benchmarks 2021, Zenodo record 10251170, CC-BY-SA-4.0):
 
 ```bash
 python main.py --cropharvest --task classification --epochs 150 \
-    --baseline lightgbm            # lightgbm | xgboost | rf
+    --baseline lightgbm            # lightgbm | xgboost | rf | extratrees | all
 python main.py --cropharvest --task classification --binary   # Rice vs other crops
+
+# Southeast Asia regional evaluation (bbox in config.CROPHARVEST_REGIONS):
+python main.py --cropharvest --task classification --region sea --baseline all
 ```
 
 - **Data.** Downloaded straight from Zenodo by `cropharvest_data.py`
@@ -61,6 +64,14 @@ python main.py --cropharvest --task classification --binary   # Rice vs other cr
   group split cannot place every class in every split (min 5 per split by
   default) it falls back to a stratified split with a loud warning, recorded
   in `metrics_summary.json`.
+- **Regional subset (`--region sea`).** Filters to the Southeast Asia/ASEAN
+  bounding box from `config.CROPHARVEST_REGIONS` (~126 samples: Thai rice and
+  sugarcane, Mekong rice, West-Java rice; Corn and Other have a single sample
+  each). The grouped split runs with per-split coverage 1 and pins
+  single-sample classes to train, since they cannot populate all three
+  splits. The run writes a sample-distribution map (`outputs/sea_sample_distribution.png`,
+  one panel per class) and, with `--baseline all`, per-baseline confusion
+  matrices plus classification reports under the run directory.
 - **Regression/HST is not available** for this source (no
   `days_after_planting` labels): `--task classification` only; `--chain` is
   rejected.
