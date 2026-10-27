@@ -1,0 +1,20 @@
+data/
+
+# Training run artifacts (models, per-run figures, logs) — regenerate-able
+outputs/*
+!outputs/presentation_maps/
+
+__pycache__/ 
+*.pyc 
+.venv/ 
+
+# IDE & Editor
+.vscode/
+.idea/
+
+# Jupyter Notebook checkpoints (jika pakai notebook)
+.ipynb_checkpoints/
+
+# System files
+.DS_Store
+Thumbs.db

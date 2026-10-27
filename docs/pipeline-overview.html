@@ -1,0 +1,313 @@
+<title>CropHarvest Pipeline Overview</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<style>
+/* Layout: single document column; the thesis figure palette (blue/orange/ink)
+   carried over from reporting.py so this page matches the 300-DPI outputs. */
+:root {
+  --bg: #f7f6f3; --surface: #ffffff; --fg: #191817; --fg-2: #52514e;
+  --fg-3: #898781; --grid: #e1e0d9; --accent: #2a78d6; --link: #256abf;
+  --accent2: #eb6834; --chip: #eef3fa; --chip-ink: #24568f;
+  --font-display: "Spectral", Georgia, "Times New Roman", serif;
+  --font-body: "IBM Plex Sans", "Segoe UI", system-ui, sans-serif;
+  --font-mono: "IBM Plex Mono", ui-monospace, Consolas, monospace;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg: #121416; --surface: #191c1f; --fg: #e8e6e1; --fg-2: #b6b3ab;
+    --fg-3: #8a8780; --grid: #2b2e32; --accent: #6da7ec; --link: #8ab8f0;
+    --accent2: #f08a5e; --chip: #1c2530; --chip-ink: #9fc3ee;
+    color-scheme: dark;
+  }
+}
+:root[data-theme="dark"] {
+  --bg: #121416; --surface: #191c1f; --fg: #e8e6e1; --fg-2: #b6b3ab;
+  --fg-3: #8a8780; --grid: #2b2e32; --accent: #6da7ec; --link: #8ab8f0;
+  --accent2: #f08a5e; --chip: #1c2530; --chip-ink: #9fc3ee;
+  color-scheme: dark;
+}
+* { box-sizing: border-box; }
+body {
+  margin: 0; background: var(--bg); color: var(--fg);
+  font-family: var(--font-body); font-size: 16px; line-height: 1.6;
+  padding-left: max(16px, env(safe-area-inset-left, 0px));
+  padding-right: max(16px, env(safe-area-inset-right, 0px));
+  padding-block: 40px 72px;
+}
+.wrap { max-width: 840px; margin: 0 auto; }
+h1, h2, h3 { font-family: var(--font-display); line-height: 1.2; text-wrap: balance; }
+h1 { font-size: clamp(30px, 5vw, 40px); margin: 10px 0 6px; font-weight: 700; }
+h2 { font-size: 24px; margin: 0 0 14px; font-weight: 600; display: flex; align-items: baseline; gap: 12px; }
+h2 .num { font-family: var(--font-mono); font-size: 13px; color: var(--fg-3); font-weight: 500; letter-spacing: 0.04em; }
+h3 { font-size: 17px; margin: 0 0 8px; font-weight: 600; }
+section { margin-top: 44px; }
+p { margin: 0 0 12px; max-width: 66ch; }
+.eyebrow { font-family: var(--font-mono); font-size: 12px; letter-spacing: 0.14em; text-transform: uppercase; color: var(--fg-3); margin: 0 0 4px; }
+.lede { font-size: 17.5px; color: var(--fg-2); margin-bottom: 20px; }
+.spec {
+  display: flex; flex-wrap: wrap; gap: 10px; margin: 26px 0 0;
+}
+.spec .cell {
+  background: var(--surface); border: 1px solid var(--grid); border-radius: 10px;
+  padding: 12px 16px; min-width: 130px; flex: 1 1 130px;
+}
+.spec .v { font-family: var(--font-mono); font-size: 22px; font-weight: 500; color: var(--accent); font-variant-numeric: tabular-nums; }
+.spec .k { font-size: 12px; color: var(--fg-3); letter-spacing: 0.04em; text-transform: uppercase; font-family: var(--font-mono); }
+.tablewrap { overflow-x: auto; margin: 14px 0 6px; }
+table { border-collapse: collapse; width: 100%; min-width: 560px; font-size: 14px; }
+th { text-align: left; font-family: var(--font-mono); font-size: 11.5px; text-transform: uppercase; letter-spacing: 0.08em; color: var(--fg-3); font-weight: 500; padding: 8px 10px; border-bottom: 1.5px solid var(--fg-3); }
+td { padding: 7px 10px; border-bottom: 1px solid var(--grid); vertical-align: top; }
+td.mono, th.mono { font-family: var(--font-mono); font-variant-numeric: tabular-nums; }
+tr:last-child td { border-bottom: none; }
+.bands td.band { font-family: var(--font-mono); font-size: 13px; }
+.src { display: inline-block; font-family: var(--font-mono); font-size: 11px; padding: 1px 8px; border-radius: 999px; background: var(--chip); color: var(--chip-ink); letter-spacing: 0.03em; }
+.steps { list-style: none; margin: 0; padding: 0; counter-reset: step; }
+.steps li { counter-increment: step; position: relative; padding: 0 0 16px 44px; }
+.steps li::before {
+  content: counter(step, decimal-leading-zero);
+  position: absolute; left: 0; top: 1px; font-family: var(--font-mono); font-size: 12.5px;
+  color: var(--accent); border: 1px solid var(--grid); border-radius: 8px; padding: 2px 7px; background: var(--surface);
+}
+.steps b { color: var(--fg); }
+.steps p { margin: 2px 0 0; color: var(--fg-2); font-size: 15px; }
+.callout {
+  border-left: 3px solid var(--accent2); background: var(--surface);
+  border-radius: 0 10px 10px 0; padding: 14px 18px; margin: 18px 0;
+}
+.callout .t { font-weight: 600; }
+.callout p { margin: 4px 0 0; font-size: 14.5px; color: var(--fg-2); }
+.bars { margin: 16px 0; }
+.bar { display: grid; grid-template-columns: 110px 1fr 64px; align-items: center; gap: 10px; margin-bottom: 9px; font-size: 13.5px; }
+.bar .lbl { text-align: right; color: var(--fg-2); }
+.bar .track { background: var(--surface); border: 1px solid var(--grid); border-radius: 6px; height: 22px; overflow: hidden; }
+.bar .fill { height: 100%; border-radius: 5px 0 0 5px; background: var(--accent); }
+.bar.cnn .fill { background: var(--accent2); }
+.bar .val { font-family: var(--font-mono); font-variant-numeric: tabular-nums; }
+.axisnote { font-size: 12.5px; color: var(--fg-3); margin-top: 6px; }
+.diagram { display: grid; grid-template-columns: 1fr 34px 1fr 34px 1fr 34px 1fr 34px 1fr; align-items: stretch; margin: 18px 0; }
+.stage { background: var(--surface); border: 1px solid var(--grid); border-radius: 10px; padding: 12px 14px; }
+.stage .fn { font-family: var(--font-mono); font-size: 12px; color: var(--accent); margin-bottom: 6px; }
+.stage .d { font-size: 13.5px; color: var(--fg-2); line-height: 1.5; }
+.stage .d b { color: var(--fg); font-weight: 500; }
+.arr { display: flex; align-items: center; justify-content: center; color: var(--fg-3); font-size: 20px; }
+.arr .down { display: none; }
+.lanes { display: grid; grid-template-rows: 1fr 1fr; gap: 6px; }
+.lane { border: 1px dashed var(--grid); border-radius: 8px; padding: 8px 10px; }
+.lane .tag { font-family: var(--font-mono); font-size: 10.5px; letter-spacing: 0.08em; text-transform: uppercase; color: var(--fg-3); }
+.lane.deep .tag { color: var(--accent2); }
+pre { background: var(--surface); border: 1px solid var(--grid); border-radius: 10px; padding: 14px 16px; overflow-x: auto; font-family: var(--font-mono); font-size: 13px; line-height: 1.55; color: var(--fg); }
+code { font-family: var(--font-mono); font-size: 0.9em; }
+a { color: var(--link); }
+.foot { margin-top: 52px; padding-top: 18px; border-top: 1px solid var(--grid); font-size: 13px; color: var(--fg-3); }
+@media (max-width: 720px) {
+  .diagram { grid-template-columns: 1fr; gap: 6px; }
+  .arr { padding: 2px 0; }
+  .arr .right { display: none; }
+  .arr .down { display: inline; }
+  .bar { grid-template-columns: 90px 1fr 58px; gap: 8px; }
+}
+</style>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Spectral:wght@500;600;700&family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500&display=swap">
+<div class="wrap">
+
+  <p class="eyebrow">S1 thesis &middot; Crop Analysis from Multimodal Remote Sensing Imagery</p>
+  <h1>The CropHarvest Pipeline, End to End</h1>
+  <p class="lede">Point-level crop-type classification over a global open benchmark: 10,610 field points,
+  four classes (Rice / Corn / Sugarcane / Other), 216 features per point built from
+  18 bands &times; 12 months of Sentinel-1, Sentinel-2, ERA5 and SRTM data &mdash; trained as a
+  1D temporal CNN against three tabular baselines, and evaluated under a
+  spatially-grouped split so every reported number reflects generalisation to
+  geographies the model never saw.</p>
+
+  <div class="spec">
+    <div class="cell"><div class="v">10,610</div><div class="k">samples</div></div>
+    <div class="cell"><div class="v">4</div><div class="k">classes</div></div>
+    <div class="cell"><div class="v">18 &times; 12</div><div class="k">bands &times; months</div></div>
+    <div class="cell"><div class="v">152</div><div class="k">spatial cells</div></div>
+    <div class="cell"><div class="v">30</div><div class="k">epochs</div></div>
+    <div class="cell"><div class="v">seed 42</div><div class="k">reproducible</div></div>
+  </div>
+
+  <section>
+    <h2><span class="num">01</span>Data</h2>
+    <p>The data source is <b>NASA CropHarvest</b> (Tseng et al., NeurIPS Datasets &amp;
+    Benchmarks 2021; Zenodo record 10251170 v14, CC-BY-SA-4.0) &mdash; a global, open
+    benchmark of point-level crop labels collected by crowdsourced and institutional
+    interpretation. Our run draws from <b>16 source datasets</b> spanning Canada,
+    France, Germany, Uzbekistan, Mali, Kenya, Tanzania, Uganda, Zimbabwe, Brazil,
+    Martinique and R&eacute;union, plus globally scattered JECAM and croplands.org
+    points (lat &minus;25&deg;&hellip;56&deg;, lon &minus;123&deg;&hellip;108&deg;). Every point is stored as an
+    HDF5 array of shape <span class="src">(12, 18)</span>: 12 monthly timesteps over 18 bands.</p>
+
+    <div class="tablewrap">
+      <table class="bands">
+        <tr><th>Source</th><th>Bands</th><th>What they measure</th></tr>
+        <tr><td><span class="src">Sentinel-1</span></td><td class="band">VV, VH</td><td>C-band SAR backscatter, both polarisations &mdash; cloud-penetrating; the flooded-paddy signal (specular reflection &rarr; very low VV)</td></tr>
+        <tr><td><span class="src">Sentinel-2</span></td><td class="band">B2 B3 B4 B5 B6 B7 B8 B8A B9 B11 B12</td><td>Visible &rarr; SWIR reflectance (B1/B10 removed by CropHarvest as atmospherically unstable)</td></tr>
+        <tr><td><span class="src">ERA5</span></td><td class="band">temperature_2m, total_precipitation</td><td>Reanalysis climate, monthly aggregates</td></tr>
+        <tr><td><span class="src">SRTM</span></td><td class="band">elevation, slope</td><td>Terrain (static in reality; repeated each month by CropHarvest)</td></tr>
+        <tr><td><span class="src">Derived</span></td><td class="band">NDVI</td><td>Vegetation index computed from the S2 bands</td></tr>
+      </table>
+    </div>
+
+    <p>Flattened for the tabular side, each band&times;month becomes one named column
+    (<span class="src">VV_Jan &hellip; NDVI_Dec</span>) &rarr; <b>216 features per point</b>. Unlike the
+    IFRI CSV, there is no separate static-vector block: all 18 bands ride along the
+    monthly axis, so the CNN input tensor is <span class="src">[B, 18, 12]</span>.</p>
+
+    <div class="tablewrap">
+      <table>
+        <tr><th>Class (index)</th><th>CropHarvest labels mapped</th><th class="mono">Samples</th></tr>
+        <tr><td>Rice (0)</td><td><span class="src">rice, paddy rice</span></td><td class="mono">2,729</td></tr>
+        <tr><td>Corn (1)</td><td><span class="src">maize, corn, ma&iuml;s</span></td><td class="mono">3,474</td></tr>
+        <tr><td>Sugarcane (2)</td><td><span class="src">sugarcane, canne &agrave; sucre</span> &mdash; incl. French tenure qualifiers (&ldquo;canne &agrave; sucre - fermage&rdquo;)</td><td class="mono">747</td></tr>
+        <tr><td>Other (3)</td><td>Sampled from all remaining labelled crops (is_crop, unmapped)</td><td class="mono">3,660</td></tr>
+      </table>
+    </div>
+    <p>Mapping Rice to index 0 keeps the pipeline&rsquo;s binary stage meaningful:
+    <span class="src">y == 0</span> is always Rice, so <span class="src">--binary</span> runs Rice-vs-rest unchanged.</p>
+  </section>
+
+  <section>
+    <h2><span class="num">02</span>Preprocessing</h2>
+    <ol class="steps">
+      <li><b>Fetch &amp; verify.</b> <span class="src">cropharvest_data.py</span> downloads
+        <span class="src">features.tar.gz</span> (78.7 MB) and <span class="src">labels.geojson</span>
+        (81.7 MB) from Zenodo, streaming to temporary files with size + md5 checks and atomic
+        rename &mdash; an interrupted download can never be mistaken for a complete one. Extraction
+        is path-traversal-guarded and marked complete by a marker file, so reruns never redo it.</li>
+      <li><b>Filter labels.</b> Drop <span class="src">is_test</span> rows (their arrays live in a
+        separate archive) and rows with null <span class="src">classification_label</span>
+        (binary-only labels). What remains is the labelled crop pool.</li>
+      <li><b>Map to 4 classes.</b> Raw label strings are casefolded and looked up in
+        <span class="src">CROPHARVEST_LABEL_MAP</span>, with a fallback that strips
+        &ldquo; - &rdquo; qualifiers; unmapped crops become the Other pool, sampled seeded
+        (<span class="src">--other-samples 4000</span>). Unmapped variants are printed at build
+        time so the map can be extended.</li>
+      <li><b>Assemble the table.</b> Each point&rsquo;s <span class="src">(12,18)</span> HDF5 array is
+        read, transposed band-major and reshaped to 216 columns; the result is cached as a CSV
+        (16.1 MB) whose filename encodes the sampling parameters, so a different seed or sample
+        size rebuilds rather than silently reusing a stale cache.</li>
+      <li><b>Spatially-grouped split.</b> Group ids are rounded 1&deg; lat/lon cells
+        (152 non-empty cells). A GroupShuffleSplit assigns whole cells to
+        80 / 10 / 10, retried with fresh seeds until <i>every</i> class has &ge;5 samples in all
+        three folds (else a loud stratified fallback). Result: train 8,747 / validation 695 /
+        test 1,168 &mdash; no geographic cell is shared across folds.</li>
+      <li><b>NaN handling.</b> Missing months are filled with the per-column median.</li>
+      <li><b>Normalisation.</b> Z-score per channel, statistics fitted <i>on the training
+        split only</i> and reused for validation/test &mdash; no leakage through the scaler.</li>
+    </ol>
+
+    <div class="callout">
+      <div class="t">Why the spatial split matters (the leakage lesson)</div>
+      <p>The same data gave the CNN <b>85.2%</b> test accuracy with a random stratified split
+      and <b>76.5%</b> with the spatially-grouped one. Neighbouring points share fields,
+      sensors and label sources; a random split leaks that correlation into the test set and
+      inflates every metric. The honest number &mdash; and the one reported &mdash; is the
+      spatial one.</p>
+    </div>
+  </section>
+
+  <section>
+    <h2><span class="num">03</span>Models: 1D CNN vs baselines</h2>
+    <h3>Tabular baselines</h3>
+    <div class="tablewrap">
+      <table>
+        <tr><th>Model</th><th>Configuration</th><th>NaN handling</th></tr>
+        <tr><td><span class="src">LightGBM</span></td><td>400 trees, lr 0.05, 31 leaves (HistGradientBoosting fallback)</td><td>native</td></tr>
+        <tr><td><span class="src">XGBoost</span></td><td>400 trees, lr 0.05, depth 6, hist method</td><td>native</td></tr>
+        <tr><td><span class="src">RandomForest</span></td><td>400 trees</td><td>per-column median imputed, fitted on train only</td></tr>
+      </table>
+    </div>
+    <p>All three consume the raw 216-column table on the <i>same</i> seeded split as the CNN,
+    so every comparison is like-for-like.</p>
+
+    <h3>CNN 1D (the deep model)</h3>
+    <div class="tablewrap">
+      <table>
+        <tr><th>Layer</th><th>Shape / detail</th></tr>
+        <tr><td>Input</td><td class="mono">[B, 18, 12] &mdash; 18 band channels over the 12-month axis</td></tr>
+        <tr><td>Conv blocks &times;3</td><td class="mono">Conv1d k=5 &rarr; 64, 128, 256 channels; each: BN + ReLU + MaxPool(2) + Dropout(0.2)</td></tr>
+        <tr><td>Attention (optional)</td><td>4-head temporal self-attention over the monthly sequence (<span class="src">--attention</span>)</td></tr>
+        <tr><td>Pooling</td><td>Global average pool over time &rarr; [B, 256]</td></tr>
+        <tr><td>Head</td><td class="mono">FC 256 &rarr; 128 &rarr; 4 logits (or 2 in binary mode)</td></tr>
+      </table>
+    </div>
+    <p><b>Why 1D convolutions over months, not 2D over images:</b> the labels are points, so
+    no spatial context exists to convolve over. Each point&rsquo;s signal <i>is</i> a set of 18
+    time series, and the conv filters slide along the phenological axis &mdash; learning, in
+    effect, shapes like &ldquo;NDVI ramps in month 3, VV dips early&rdquo; without hand-built
+    features. The GAP makes the summary invariant to where in the season the cycle starts.
+    Training: FocalLoss (&gamma;=2) for class imbalance, Adam (lr 1e-3, wd 1e-4),
+    ReduceLROnPlateau, early stopping patience 20, best checkpoint by validation loss.</p>
+  </section>
+
+  <section>
+    <h2><span class="num">04</span>Results (spatially-grouped test set)</h2>
+    <div class="bars">
+      <div class="bar"><div class="lbl">LightGBM</div><div class="track"><div class="fill" style="width:86%"></div></div><div class="val">78.60%</div></div>
+      <div class="bar"><div class="lbl">XGBoost</div><div class="track"><div class="fill" style="width:82.5%"></div></div><div class="val">78.25%</div></div>
+      <div class="bar"><div class="lbl">RandomForest</div><div class="track"><div class="fill" style="width:56.8%"></div></div><div class="val">75.68%</div></div>
+      <div class="bar cnn"><div class="lbl">CNN 1D</div><div class="track"><div class="fill" style="width:65.4%"></div></div><div class="val">76.54%</div></div>
+    </div>
+    <p class="axisnote">4-class test accuracy, bars windowed to the 70&ndash;80% range. Macro-F1:
+    LightGBM 78.0 &middot; XGBoost 77.9 &middot; RF 75.3 &middot; CNN 77.2. Chance is 25%.</p>
+    <p>On this benchmark the gradient-boosted trees and the CNN land in the same band
+    (76&ndash;79%). The CNN&rsquo;s temporal structure is not yet the deciding factor at 10k
+    samples &mdash; the binding constraints are label noise from heterogeneous
+    interpretation protocols and the coarse &ldquo;Other&rdquo; class. The <b>binary</b> stage
+    (Rice vs rest) reaches <b>88.9%</b> &mdash; nearly identical to the IFRI 2024 two-class
+    stage&rsquo;s 89.29%, which anchors the replication story.</p>
+  </section>
+
+  <section>
+    <h2><span class="num">05</span>Code architecture</h2>
+    <div class="tablewrap">
+      <table>
+        <tr><th>File</th><th>Responsibility</th></tr>
+        <tr><td class="mono">config.py</td><td>All constants (bands, class names, label map, Zenodo id) + the <span class="src">TrainingConfig</span> dataclass holding every knob; serialised into every checkpoint and summary</td></tr>
+        <tr><td class="mono">cropharvest_data.py</td><td>Download/verify/extract Zenodo files; parse labels; map to 4 classes; assemble the 216-column table; cache; 1&deg;-cell group ids</td></tr>
+        <tr><td class="mono">dataset.py</td><td>Feature discovery; <span class="src">CropDataset</span> (tensor contract <span class="src">x_t, x_s, y</span>); train-only normalisers; stratified and grouped 80/10/10 splits; DataLoaders</td></tr>
+        <tr><td class="mono">baselines.py</td><td><span class="src">run_tabular_baseline</span> &mdash; LightGBM / XGBoost / RandomForest on the raw table, same split and metrics as the CNN</td></tr>
+        <tr><td class="mono">models.py</td><td><span class="src">TemporalCNN1D</span> backbone, <span class="src">CropClassifier</span> / <span class="src">CropRegressor</span> heads, <span class="src">FocalLoss</span> &mdash; all parameterised by channel/class counts (18 channels and 0 static features work unchanged)</td></tr>
+        <tr><td class="mono">training.py</td><td>Seeding; loss builders; train/evaluate loops; Adam + LR plateau + early stopping; final per-class P/R/F1 and confusion matrix</td></tr>
+        <tr><td class="mono">main.py</td><td>CLI and orchestration: exactly one source (<span class="src">--data / --synthetic / --cropharvest</span>), validation (e.g. HST regression rejected for CropHarvest), run directory + summary assembly</td></tr>
+        <tr><td class="mono">reporting.py</td><td>300-DPI figures (learning curves, confusion matrix, split map), source-aware thesis draft (.md + .tex), <span class="src">metrics_summary.json</span></td></tr>
+      </table>
+    </div>
+
+    <div class="diagram">
+      <div class="stage"><div class="fn">cropharvest_data.py</div><div class="d">download &middot; extract &middot; filter &middot; map labels &middot; <b>216-col table</b></div></div>
+      <div class="arr"><span class="right">&rarr;</span><span class="down">&darr;</span></div>
+      <div class="stage"><div class="fn">dataset.py</div><div class="d"><b>1&deg;-cell group split</b> 80/10/10 &middot; NaN median &middot; train-only z-score</div></div>
+      <div class="arr"><span class="right">&rarr;</span><span class="down">&darr;</span></div>
+      <div class="stage">
+        <div class="lanes">
+          <div class="lane"><div class="tag">tabular lane</div><div class="d"><b>baselines.py</b> &mdash; LightGBM / XGBoost / RF on raw 216 cols</div></div>
+          <div class="lane deep"><div class="tag">deep lane</div><div class="d"><b>models.py</b> &mdash; [B,18,12] &rarr; TemporalCNN1D &rarr; 4 logits</div></div>
+        </div>
+      </div>
+      <div class="arr"><span class="right">&rarr;</span><span class="down">&darr;</span></div>
+      <div class="stage"><div class="fn">training.py</div><div class="d">FocalLoss &gamma;=2 &middot; Adam &middot; early stop &middot; <b>test metrics</b> on held-out cells</div></div>
+      <div class="arr"><span class="right">&rarr;</span><span class="down">&darr;</span></div>
+      <div class="stage"><div class="fn">reporting.py</div><div class="d">figures (300 DPI) &middot; thesis draft .md/.tex &middot; metrics_summary.json &rarr; <b>outputs/run_&lt;ts&gt;/</b></div></div>
+    </div>
+
+    <h3>Run it</h3>
+    <pre>python main.py --cropharvest --task classification --epochs 150 --baseline lightgbm
+python main.py --cropharvest --task classification --baseline xgboost   # or rf
+python main.py --cropharvest --task classification --binary             # Rice vs rest
+python main.py --cropharvest --task classification --attention          # + temporal self-attention</pre>
+    <p>Everything is seed-controlled (seed 42 reproduces the exact split and metrics above);
+    the downloaded data and the built table live in <span class="src">data/cropharvest/</span>,
+    and reruns hit the cache and go straight to training.</p>
+  </section>
+
+  <div class="foot">
+    <p><b>Data:</b> G. Tseng, I. Zvonkov, C. L. Nakalembe, H. Kerner, <i>CropHarvest: A global
+    dataset for crop-type classification</i>, NeurIPS Datasets and Benchmarks, 2021 &mdash;
+    Zenodo record 10251170 (v14), CC-BY-SA-4.0. The pipeline also runs on the synthetic demo
+    and the IFRI 181-column GEE CSV; the HST regression stage remains IFRI-only.
+    Figures in <span class="src">outputs/run_*/figures/</span> use the same palette as this page.</p>
+  </div>
+
+</div>
