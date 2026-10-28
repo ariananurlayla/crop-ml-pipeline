@@ -181,7 +181,9 @@ def train_val_test_split(df: pd.DataFrame, config: TrainingConfig, stratify: boo
 
 
 def train_val_test_split_grouped(df: pd.DataFrame, groups, config: TrainingConfig,
-                                 min_per_class: int = None, max_attempts: int = 25):
+                                 min_per_class: int = None, max_attempts: int = 25,
+                                 singletons_to_train: bool = False,
+                                 row_tolerance: float = None):
     """Spatially-grouped 80/10/10 split: no group (e.g. source region) is
     shared between train/val/test, so held-out metrics reflect generalisation
     to unseen geographies instead of spatial autocorrelation leakage.
@@ -190,7 +192,16 @@ def train_val_test_split_grouped(df: pd.DataFrame, groups, config: TrainingConfi
     cannot stratify, so the split is retried with fresh seeds until every class
     present in the data has >= ``min_per_class`` samples in all three splits;
     if no attempt passes, falls back to the stratified split with a loud
-    warning. Returns ``(train, val, test, info)``.
+    warning.
+
+    With ``singletons_to_train=True`` (small regional subsets), a class with a
+    single sample cannot populate all three splits, so those rows are pinned to
+    train and the coverage check runs on the remaining classes only.
+
+    With ``row_tolerance`` (small datasets), an attempt is also rejected when
+    any split deviates from the configured row fractions by more than this
+    value; if no attempt meets it, the closest coverage-passing attempt is
+    used. Returns ``(train, val, test, info)``.
     """
     min_per_class = (config.min_class_coverage if min_per_class is None
                      else min_per_class)
@@ -198,6 +209,21 @@ def train_val_test_split_grouped(df: pd.DataFrame, groups, config: TrainingConfi
         groups = df[groups].to_numpy()
     y = df[TARGET_CLASS].to_numpy()
     classes_present = np.unique(y)
+    counts = np.bincount(y, minlength=int(classes_present.max()) + 1)
+
+    pool_idx = np.arange(len(df))
+    forced_idx = np.array([], dtype=int)
+    cov_classes = list(classes_present)
+    singleton_info = None
+    if singletons_to_train:
+        singleton = [c for c in classes_present if counts[c] == 1]
+        if singleton:
+            forced_idx = np.where(np.isin(y, singleton))[0]
+            pool_idx = np.setdiff1d(pool_idx, forced_idx)
+            cov_classes = [c for c in classes_present if c not in singleton]
+            singleton_info = {CLASS_NAMES[c]: int(counts[c]) for c in singleton}
+            print(f"[dataset] singleton classes {singleton_info} "
+                  f"({len(forced_idx)} rows) pinned to train - cannot cover all splits")
 
     def _counts(idx):
         cnt = np.bincount(y[idx], minlength=int(classes_present.max()) + 1)
@@ -206,25 +232,42 @@ def train_val_test_split_grouped(df: pd.DataFrame, groups, config: TrainingConfi
     def _coverage_ok(train_idx, val_idx, test_idx):
         for idx in (train_idx, val_idx, test_idx):
             cnt = np.bincount(y[idx], minlength=int(classes_present.max()) + 1)
-            if any(cnt[c] < min_per_class for c in classes_present):
+            if any(cnt[c] < min_per_class for c in cov_classes):
                 return False
         return True
 
     info = {"split_type": "spatial-group"}
+    if singleton_info:
+        info["singleton_classes_to_train"] = singleton_info
+    best_candidate = None
+    n = len(df)
     for attempt in range(max_attempts):
         try:
             gss = GroupShuffleSplit(n_splits=1,
                                     test_size=config.val_size + config.test_size,
                                     random_state=config.seed + attempt)
-            train_idx, rest_idx = next(gss.split(np.arange(len(df)), groups=groups))
+            train_rel, rest_rel = next(gss.split(pool_idx, groups=groups[pool_idx]))
             rest_frac = config.test_size / (config.val_size + config.test_size)
             val_rel, test_rel = next(GroupShuffleSplit(
                 n_splits=1, test_size=rest_frac,
-                random_state=config.seed + attempt).split(rest_idx, groups=groups[rest_idx]))
-            val_idx, test_idx = rest_idx[val_rel], rest_idx[test_rel]
+                random_state=config.seed + attempt).split(
+                    pool_idx[rest_rel], groups=groups[pool_idx[rest_rel]]))
+            train_pool = pool_idx[train_rel]
+            rest_pool = pool_idx[rest_rel]
+            val_idx = rest_pool[val_rel]
+            test_idx = rest_pool[test_rel]
+            train_idx = np.concatenate([forced_idx, train_pool])
         except ValueError:
             continue
         if _coverage_ok(train_idx, val_idx, test_idx):
+            dev = max(abs(len(train_idx) / n - config.train_size),
+                      abs(len(val_idx) / n - config.val_size),
+                      abs(len(test_idx) / n - config.test_size))
+            if row_tolerance is not None:
+                if best_candidate is None or dev < best_candidate[0]:
+                    best_candidate = (dev, train_idx, val_idx, test_idx, attempt + 1)
+                if dev > row_tolerance:
+                    continue
             info.update({
                 "attempts": attempt + 1,
                 "train_groups": int(len(np.unique(groups[train_idx]))),
@@ -241,6 +284,26 @@ def train_val_test_split_grouped(df: pd.DataFrame, groups, config: TrainingConfi
                     df.iloc[val_idx].reset_index(drop=True),
                     df.iloc[test_idx].reset_index(drop=True),
                     info)
+    if best_candidate is not None:
+        dev, train_idx, val_idx, test_idx, attempt = best_candidate
+        info.update({
+            "attempts": attempt,
+            "train_groups": int(len(np.unique(groups[train_idx]))),
+            "val_groups": int(len(np.unique(groups[val_idx]))),
+            "test_groups": int(len(np.unique(groups[test_idx]))),
+            "class_counts": {"train": _counts(train_idx),
+                             "val": _counts(val_idx),
+                             "test": _counts(test_idx)},
+            "row_fraction_deviation": round(dev, 3),
+        })
+        print(f"[dataset] spatial-group split OK (attempt {attempt}, best of "
+              f"{max_attempts}): train {len(train_idx)} / val {len(val_idx)} / "
+              f"test {len(test_idx)} rows (row-fraction deviation {dev:.3f} > "
+              f"tolerance {row_tolerance})")
+        return (df.iloc[train_idx].reset_index(drop=True),
+                df.iloc[val_idx].reset_index(drop=True),
+                df.iloc[test_idx].reset_index(drop=True),
+                info)
     print(f"[dataset] WARNING: spatial-group split failed the class-coverage check "
           f"after {max_attempts} attempts - falling back to stratified split "
           "(spatial leakage possible)")

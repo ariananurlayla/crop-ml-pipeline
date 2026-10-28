@@ -1,12 +1,13 @@
 """
 Part B.1 - Shallow tabular baselines.
 
-Three selectable models (``--baseline``): LightGBM (the IFRI replication
-target ~67.2% test accuracy, skema 2), XGBoost, and Random Forest. All
-consume the raw feature table directly - LightGBM/XGBoost handle NaN
-natively; Random Forest gets per-column median imputation fitted on train
-only. LightGBM falls back to scikit-learn's HistGradientBoostingClassifier
-(both histogram-based GBDTs).
+Four selectable models (``--baseline``): LightGBM (the IFRI replication
+target ~67.2% test accuracy, skema 2), XGBoost, Random Forest, and
+Extra Trees (``--baseline all`` fits all four). All consume the raw feature
+table directly - LightGBM/XGBoost handle NaN natively; Random Forest and
+Extra Trees get per-column median imputation fitted on train only. LightGBM
+falls back to scikit-learn's HistGradientBoostingClassifier (both
+histogram-based GBDTs).
 """
 from __future__ import annotations
 
@@ -50,13 +51,21 @@ def _rf_model(seed: int):
     return model, "RandomForest"
 
 
+def _et_model(seed: int):
+    from sklearn.ensemble import ExtraTreesClassifier
+    model = ExtraTreesClassifier(n_estimators=400, n_jobs=-1, random_state=seed)
+    return model, "ExtraTrees"
+
+
 def run_tabular_baseline(train_df, test_df, config, feature_cols,
                          model_name: str = "lightgbm", binary: bool = False):
     """Fit a shallow tabular baseline on the same train/test split as the CNN.
 
-    ``model_name``: 'lightgbm' (default, HistGB fallback), 'xgboost', or
-    'rf'. With ``binary=True`` the labels are remapped to the IFRI 2-class
-    stage: 1 = Rice, 0 = Non-Rice. Returns ``(results_dict, fitted_model)``.
+    ``model_name``: 'lightgbm' (default, HistGB fallback), 'xgboost', 'rf',
+    or 'extratrees'. With ``binary=True`` the labels are remapped to the IFRI
+    2-class stage: 1 = Rice, 0 = Non-Rice. Returns
+    ``(results_dict, fitted_model)``; results carry ``y_true``/``y_pred`` so
+    callers can build per-model classification reports.
     """
     if model_name == "lightgbm":
         model, name = _gbdt_model(config.seed)
@@ -64,12 +73,14 @@ def run_tabular_baseline(train_df, test_df, config, feature_cols,
         model, name = _xgb_model(config.seed)
     elif model_name == "rf":
         model, name = _rf_model(config.seed)
+    elif model_name == "extratrees":
+        model, name = _et_model(config.seed)
     else:
         raise ValueError(f"unknown baseline model '{model_name}'")
 
     X_train = train_df[feature_cols]
     X_test = test_df[feature_cols]
-    if model_name == "rf":   # Random Forest cannot ingest NaN
+    if model_name in ("rf", "extratrees"):   # trees cannot ingest NaN
         X_train = X_train.to_numpy(dtype=np.float32)
         X_test = X_test.to_numpy(dtype=np.float32)
         med = np.nanmedian(X_train, axis=0, keepdims=True)
@@ -91,6 +102,8 @@ def run_tabular_baseline(train_df, test_df, config, feature_cols,
                                              zero_division=0)) * 100, 2),
         "confusion_matrix": confusion_matrix(y_test, y_pred,
                                              labels=range(n_classes)).tolist(),
+        "y_true": y_test.tolist(),
+        "y_pred": y_pred.tolist(),
     }
     print(f"[baseline] {name} (raw {len(feature_cols)} features, {n_classes} classes): "
           f"test acc {results['test_accuracy_pct']}% | macro-F1 {results['macro_f1_pct']}%")

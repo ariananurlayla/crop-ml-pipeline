@@ -269,6 +269,13 @@ def spatial_grid_groups(df: pd.DataFrame, cell_deg: float = SPATIAL_CELL_DEG):
     return lat.astype(str) + "_" + lon.astype(str)
 
 
+def filter_region(df: pd.DataFrame, bbox: dict) -> pd.DataFrame:
+    """Keep only the rows inside a lat/lon bounding box (``--region``)."""
+    m = (df["latitude"].between(bbox["lat_min"], bbox["lat_max"])
+         & df["longitude"].between(bbox["lon_min"], bbox["lon_max"]))
+    return df[m].reset_index(drop=True)
+
+
 # ---------------------------------------------------------------------------
 # DataFrame assembly (the 216-feature table the pipeline consumes)
 # ---------------------------------------------------------------------------
